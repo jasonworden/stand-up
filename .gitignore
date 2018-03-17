@@ -1,0 +1,16 @@
+# OS X hidden files for Finder icons:
+.DS_Store
+
+# NPM
+npm-debug.log
+
+/node_modules
+
+# Jetbrains Webstorm IDE config:
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/workspace.xml
+.idea/tasks.xml
+
+# vscode settings
+/.vscode
