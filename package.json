@@ -1,6 +1,6 @@
 {
   "name": "stand-up",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Stand uppppp!' - Chris Bridges",
   "main": "app.js",
   "dependencies": {
