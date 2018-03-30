@@ -11,37 +11,26 @@ const reader = new CsvReader();
 const commandLineUsage = require('command-line-usage');
 const commandLineArgs = require('command-line-args');
 
-const optionDefinitions = [
-  { name: 'duration', alias: 'd', type: Number, defaultValue: 10 },
-  { name: 'volume', alias: 'v', type: Number, },
-  { name: 'fade-in', alias: 'i', type: Number, },
-  { name: 'fade-out', alias: 'o', type: Number, },
-  { name: 'help', alias: 'h', type: Boolean, },
-  { name: 'verbose', type: Boolean, },
-];
+const optionDefinitions = [{  name: 'duration',  alias: 'd',  type: Number,  defaultValue: 10,
+  typeLabel: '{underline seconds}',
+  description: 'The total duration of the alarm.',
+}, {  name: 'volume',  alias: 'v',  type: Number,  typeLabel: '{underline percent}',
+  description: 'The volume of the alarm on Spotify.',
+}, {  name: 'fade-in',  alias: 'i',  type: Number,  typeLabel: '[{underline seconds}]',
+  description: 'Whether or not to fade in, optionally the time to fade in.',
+}, {  name: 'fade-out',  alias: 'o',  type: Number,  typeLabel: '[{underline seconds}]',
+  description: 'Whether or not to fade out, optionally the time to fade out.',
+}, {  name: 'help',  alias: 'h',  type: Boolean,  description: 'This help dialog',
+}, {  name: 'verbose',  type: Boolean,
+  description: 'Verbose output',
+}];
 
 const sections = [{
   header: 'Stand Up',
   content: 'Play music from Spotify for stand-up',
 }, {
   header: 'Options',
-  optionList: [{
-    name: 'duration',
-    typeLabel: '{underline seconds}',
-    description: 'The total duration of the alarm.',
-  }, {
-    name: 'volume',
-    typeLabel: '{underline percent}',
-    description: 'The volume of the alarm on Spotify.',
-  }, {
-    name: 'fade-in',
-    typeLabel: '[{underline seconds}]',
-    description: 'Whether or not to fade in, optionally the time to fade in.',
-  }, {
-    name: 'fade-out',
-    typeLabel: '[{underline seconds}]',
-    description: 'Whether or not to fade out, optionally the time to fade out.',
-  }],
+  optionList: optionDefinitions,
 }];
 
 const options = commandLineArgs(optionDefinitions);
@@ -123,8 +112,7 @@ const run = async () => {
 
   const { volume } = await spotify.getState();
   const { uri, startingPoint } = await getRandomTrackFromList();
-  
-  // pause the player
+   // pause the player
   await spotify.pause();
   // mute the volume
   await spotify.muteVolume();
@@ -133,7 +121,6 @@ const run = async () => {
 
   // wait until new track is playing so jump is successful
   await spotify.waitForTrackToLoad(uri, { timeoutSeconds: DEFAULT_CALL_TIMEOUT_SECONDS });
-  
   // jump to position in song
   await spotify.jumpTo(startingPoint);
 
