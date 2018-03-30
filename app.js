@@ -3,13 +3,75 @@ const Promise = require('bluebird');
 const notifier = require('node-notifier');
 const spotify = require('./lib/spotify.js');
 const objectPath = require('object-path');
+const log = require('./lib/log.js');
 
 const CsvReader = require('promised-csv');
 const reader = new CsvReader();
 
-const DEFAULT_START_VOLUME = 25;
+const commandLineUsage = require('command-line-usage');
+const commandLineArgs = require('command-line-args');
 
-// returns promise:
+const optionDefinitions = [
+  { name: 'duration', alias: 'd', type: Number, defaultValue: 10 },
+  { name: 'volume', alias: 'v', type: Number, },
+  { name: 'fade-in', alias: 'i', type: Number, },
+  { name: 'fade-out', alias: 'o', type: Number, },
+  { name: 'help', alias: 'h', type: Boolean, },
+  { name: 'verbose', type: Boolean, },
+];
+
+const sections = [{
+  header: 'Stand Up',
+  content: 'Play music from Spotify for stand-up',
+}, {
+  header: 'Options',
+  optionList: [{
+    name: 'duration',
+    typeLabel: '{underline seconds}',
+    description: 'The total duration of the alarm.',
+  }, {
+    name: 'volume',
+    typeLabel: '{underline percent}',
+    description: 'The volume of the alarm on Spotify.',
+  }, {
+    name: 'fade-in',
+    typeLabel: '[{underline seconds}]',
+    description: 'Whether or not to fade in, optionally the time to fade in.',
+  }, {
+    name: 'fade-out',
+    typeLabel: '[{underline seconds}]',
+    description: 'Whether or not to fade out, optionally the time to fade out.',
+  }],
+}];
+
+const options = commandLineArgs(optionDefinitions);
+
+if ('fade-in' in options) {
+  options['fadeIn'] = !options['fade-in'] ? DEFAULT_FADE_DURATION_SECONDS : options['fade-in'];
+  delete options['fade-in'];
+}
+
+if ('fade-out' in options) {
+  options['fadeOut'] = !options['fade-out'] ? DEFAULT_FADE_DURATION_SECONDS : options['fade-out'];
+  delete options['fade-out'];
+}
+
+log.setIsVerbose(options.verbose);
+
+log.trace('options', options);
+
+if (options.help) {
+  const usage = commandLineUsage(sections);
+  log.info(usage);
+  process.exit(0);
+}
+
+const nonFadeDuration = options.duration - (options.fadeIn || 0) - (options.fadeOut || 0);
+
+if (nonFadeDuration < 0) {
+  log.info('Notice: Fade in and fade out are longer than the duration.');
+}
+
 const getTrackList = () => reader.read('songs.csv', (data) => {
   const min = _.toInteger(data[1]);
   const sec = _.toNumber(data[2]);
@@ -33,67 +95,82 @@ const showCurrentTrackNotification = async () => {
   });
 };
 
-const increaseVolumeWithEasing = async ({
-  duration = 8 * 1000,
-  intervalsCount = 10,
-  startVolume = DEFAULT_START_VOLUME,
-  endVolume = 100,
-} = {}) => {
-  await spotify.setVolume(startVolume);
-  const intervalDuration = duration / intervalsCount;
-  for (let i = 0; i <= intervalsCount; i++) {
-    const volume = startVolume + (i / intervalsCount) * (endVolume - startVolume);
-    await spotify.setVolume(volume);
-    await Promise.delay(intervalDuration);
+const VOLUME_STEPS_PER_SECOND = 10;
+
+const volumeFade = async (from, to, { durationSeconds }) => {
+  log.trace(`fading volume from ${from} to ${to} over ${durationSeconds}`);
+  const isIncreasing = from < to;
+  // NOTE(dzaman): this won't be perfect because it doesn't take into account the time to execute commands
+  const stepSize = (to - from) / (durationSeconds * VOLUME_STEPS_PER_SECOND);
+  let current = from;
+
+  while (isIncreasing ? current < to : current > to) {
+    await spotify.setVolume(current);
+    await Promise.delay(SECONDS_TO_MS/VOLUME_STEPS_PER_SECOND);
+
+    // stepSize may be negative
+    current += stepSize;
   }
 };
 
-const decreaseVolumeFromMaxWithEasing = async ({
-  duration = 10 * 1000,
-  intervalsCount = 10,
-  endVolume = 0,
-} = {}) => {
-  const startVolume = 100;
-  const intervalDuration = duration / intervalsCount;
-  for (let i = 0; i <= intervalsCount; i++) {
-  // for (let i = intervalsCount; i >= 0; i--) {
-    const volume = startVolume - (i / intervalsCount) * (startVolume - endVolume);
-    await spotify.setVolume(volume);
-    await Promise.delay(intervalDuration);
-  }
-};
-
+const DEFAULT_CALL_TIMEOUT_SECONDS = 10;
+const SECONDS_TO_MS = 1000;
 
 const run = async () => {
-  await spotify.pause();
+  // start up spotify
+  log.info('Standing up!');
+  await spotify.ascertainIsOpened({ timeoutSeconds: DEFAULT_CALL_TIMEOUT_SECONDS });
 
-  console.log('Standing up!');
-  await spotify.ascertainIsOpened();
-
+  const { volume } = await spotify.getState();
   const { uri, startingPoint } = await getRandomTrackFromList();
+  
+  // pause the player
+  await spotify.pause();
+  // mute the volume
+  await spotify.muteVolume();
+  // change the track
   await spotify.playTrack(uri);
 
-  await spotify.pause();
-  // await spotify.muteVolume();
-  // give time for new song to register so we can jump to desired spot successfully:
-  await Promise.delay(1 * 1000);
+  // wait until new track is playing so jump is successful
+  await spotify.waitForTrackToLoad(uri, { timeoutSeconds: DEFAULT_CALL_TIMEOUT_SECONDS });
+  
+  // jump to position in song
   await spotify.jumpTo(startingPoint);
+
+  // unmute the volume
+  await spotify.unmuteVolume();
+
+  if (options.fadeIn) {
+    await spotify.setVolume(0);
+  }
+
   // await spotify.unmuteVolume();
-  await spotify.setVolume(DEFAULT_START_VOLUME);
   await spotify.play();
 
-  await Promise.all([
-    showCurrentTrackNotification(),
-    increaseVolumeWithEasing(),
-  ]);
-  await Promise.delay(22 * 1000);
-  await decreaseVolumeFromMaxWithEasing();
+  // this doesn't need to block
+  showCurrentTrackNotification();
+
+  if (options.fadeIn) {
+    await volumeFade(0, options.volume, { durationSeconds: options.fadeIn });
+  } else {
+    await spotify.setVolume(options.volume);
+  }
+
+  await Promise.delay(nonFadeDuration * SECONDS_TO_MS);
+
+  if (options.fadeOut) {
+    await volumeFade(options.volume, 0, { durationSeconds: options.fadeOut });
+  }
+
+  await spotify.pause();
+
+  // TODO(matt): restore what was previously playing if applicable
 };
 
 Promise.resolve()
 .then(run)
 .catch(console.error)
 .finally(() => {
-  console.log('Sitting down...');
+  log.info('Sitting down...');
   process.exit(0);
 });
